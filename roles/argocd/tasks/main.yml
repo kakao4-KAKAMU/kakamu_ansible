@@ -1,0 +1,101 @@
+- name: k8s argocd helm chart (Bootstrap)
+  hosts: kube_control_plane[0]
+  become: yes # 관리자 권한
+  vars:
+    # 프라이빗 노드로 접속하기 위한 SSH 설정 (bastion -> control plane)
+    ansible_ssh_common_args: '-o ProxyCommand="ssh -W %h:%p -q ubuntu@{{ groups["bastion"][0] }}"'
+
+  tasks:
+    - name: helm repo 확인
+      shell: helm repo list | grep argo
+      register: argo_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: argo repo 추가
+      when: argo_check.rc != 0 # argp repo가 없을 때 실행
+      shell: |
+        helm repo add argo https://argoproj.github.io/argo-helm
+        helm repo update
+
+    - name: argocd 설정 파일 생성
+      copy: # copy 모듈, 멱등성도 해결
+        dest: argocd_values.yaml # 파일 명
+        content: | # 파일 내용
+          server:
+            extraArgs:
+            - --rootpath
+            - /argocd
+            - --insecure
+
+    - name: argocd 설치
+      kubernetes.core.helm: # 앤서블에서 제공하는 helm 모듈
+        name: argocd #
+        chart_ref: argo/argo-cd #
+        release_namespace: argo # 대상 네임스페이스
+        create_namespace: true # argo 네임스페이스 없으면 생성
+        values_files: # 설정 파일
+          - argocd_values.yaml
+
+    - name: argocd 상태 확인
+      # argocd pod가 잘 실행되었는지 확인하는 명렁어
+      # kubectl wait 명령어로 pod의 컨디션이 Ready로 되었는지 확인
+      # argocd-server 라벨이 붙은 Pod만 확인
+      # 300초 까지 기다리고 타임아웃.
+      shell: |
+        kubectl wait --for=condition=Ready pod \
+        -l app.kubernetes.io/name=argocd-server \
+        -n argo --timeout=300s
+      register: argocd_ready
+      changed_when: false
+
+    - name: argocd ingress
+      copy:
+        dest: argo_ingress.yaml
+        content: |
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: argocd-server-ingress
+            namespace: argo
+            annotations:
+              kubernetes.io/ingress.class: nginx
+              nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+              nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+          spec:
+            rules:
+            - http:
+                paths:
+                - path: /argocd
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: argocd-server
+                      port:
+                        number: 443
+
+    - name: ingress 설치
+      when: argocd_ready.rc == 0
+      shell: |
+        kubectl apply -f argo_ingress.yaml
+
+    - name: 초기 비밀번호 Secret 존재 여부 확인
+      shell: kubectl -n argo get secret argocd-initial-admin-secret
+      register: secret_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: 초기 비밀번호 확인
+      shell: 'kubectl -n argo get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d'
+      register: argocd_password
+      when: secret_check.rc == 0
+      no_log: true # actions에 로그 출력 x
+
+    - name: 초기 비밀번호 출력
+      debug:
+        msg: "ArgoCD 초기 비밀번호( 비밀번호 변경 필수 ) : {{ argocd_password.stdout }}"
+
+    
+
+        
+          
