@@ -2,7 +2,6 @@
   hosts: kube_control_plane[0]
   become: yes # 관리자 권한
   vars:
-    helm_version: "v3.20.2" # 현재 컨트롤 플레인에 설치된 버전
     # 프라이빗 노드로 접속하기 위한 SSH 설정 (bastion -> control plane)
     ansible_ssh_common_args: '-o ProxyCommand="ssh -W %h:%p -q ubuntu@{{ groups["bastion"][0] }}"'
 
