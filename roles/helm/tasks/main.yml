@@ -1,0 +1,36 @@
+- name: Post-k8s Deployment Tasks (Bootstrap)
+  hosts: kube_control_plane[0]
+  become: yes # 관리자 권한
+  vars:
+    helm_version: "v3.20.2" # 현재 컨트롤 플레인에 설치된 버전
+    # 프라이빗 노드로 접속하기 위한 SSH 설정 (bastion -> control plane)
+    ansible_ssh_common_args: '-o ProxyCommand="ssh -W %h:%p -q ubuntu@{{ groups["bastion"][0] }}"'
+
+  tasks:
+
+    - name: Helm 설치 확인
+      command: helm version --short # 명령어 실행
+      register: helm_check # 위 명령어 결과를 helm_check에 기록
+      ignore_errors: yes # 실패해도 무시하고 계속 진행
+      changed_when: false # 설치 확인 작업이므로 상태가 changed 되는 거를 차단
+
+    - name: Helm 설치
+      when:  helm_check.failed # helm_check 상태가 failed일 때만 실행.
+      block:
+        - name: Helm 설치 스크립트 다운로드
+          get_url:
+            url: "https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3"
+            dest: "/tmp/get_helm.sh"
+            mode: '0755'
+
+        - name: 설치 스크립트 실행
+          shell: "tmp/get_helm.sh --version {{ helm_version }}"
+
+    - name: Helm 설치 확인
+      command: helm version
+      register: helm_result
+      changed_when: false
+
+    - name: Helm 버전 출력
+      debug:
+        msg: "설치된 Helm 버전: {{ helm_result.stdout }}" # 3.20.2 버전이 나와야 함.

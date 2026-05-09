@@ -1,0 +1,30 @@
+- name: Post-k8s Deployment Tasks (Bootstrap)
+  hosts: kube_control_plane[0]
+  become: yes # 관리자 권한
+  vars:
+    helm_version: "v3.20.2" # 현재 컨트롤 플레인에 설치된 버전
+    # 프라이빗 노드로 접속하기 위한 SSH 설정 (bastion -> control plane)
+    ansible_ssh_common_args: '-o ProxyCommand="ssh -W %h:%p -q ubuntu@{{ groups["bastion"][0] }}"'
+
+  tasks:
+    - name: 쿠버네티스 명령어 확인
+      command: kubectl get nodes
+      register: k8s_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: 쿠버네티스 설정 파일 작업
+      when: k8s_check.failed
+      shell: |
+        mkdir -p $HOME/.kube
+        sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+        sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+    - name: 노드 상태 확인
+      command: kubectl get nodes
+      register: k8s_node_result
+      changed_when: false
+
+    - name: 노드 상태 출력
+      debug:
+        msg: "노드 상태 : {{ k8s_node_result.stdout_lines }}" # actions 탭에서 확인
